@@ -1,0 +1,29 @@
+name: C2C Daily Alert
+
+on:
+  schedule:
+    - cron: "30 3 * * 1-6"   # 9:00 AM IST (UTC+5:30), Mon–Sat
+  workflow_dispatch:           # also allows manual trigger from GitHub UI
+
+jobs:
+  send-alert:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyadomd azure-identity anthropic requests
+
+      - name: Run C2C alert
+        env:
+          SLACK_WEBHOOK_URL:    ${{ secrets.SLACK_WEBHOOK_URL }}
+          ANTHROPIC_API_KEY:    ${{ secrets.ANTHROPIC_API_KEY }}
+          AZURE_TENANT_ID:      ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID:      ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET:  ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: python c2c_alert.py
