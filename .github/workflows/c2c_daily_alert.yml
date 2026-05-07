@@ -17,7 +17,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install pyadomd azure-identity requests
+        run: pip install azure-identity requests
 
       - name: Run C2C alert
         env:
