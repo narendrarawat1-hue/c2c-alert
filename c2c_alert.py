@@ -163,9 +163,7 @@ def fmt(key: str, val) -> str:
         return f"{val:.2f}x"
     if abs(val) >= 1_000_000:
         return f"{val/1_000_000:.2f}M"
-    if abs(val) >= 1_000:
-        return f"{val:,.0f}"
-    return f"{val:.2f}"
+    return f"{int(round(val)):,}"
 
 
 def chg(key: str, new_val, old_val) -> str:
@@ -189,6 +187,10 @@ def color_chg(key: str, new_val, old_val) -> str:
     return f"{sign} {abs(pct):.1f}%"
 
 
+def center_col(val: str, width: int) -> str:
+    return val.center(width)
+
+
 def build_summary_block(data: dict) -> str:
     row = data["summary"]
     dr  = data["dr"]
@@ -201,9 +203,20 @@ def build_summary_block(data: dict) -> str:
         f"LW {d(dr['lw_start'])}→{d(dr['lw_end'])}"
     )
 
-    header = f"{'Metric':<16} | {'MTD':>8} | {'LMTD':>8} | {'MTD Δ':<14} | {'D-1':>8} | {'Cur Wk':>8} | {'Lst Wk':>8} | WoW Δ"
-    sep    = "-" * len(header)
+    # column widths
+    CW = {"label": 16, "mtd": 8, "lmtd": 8, "chg": 12, "d1": 8, "cw": 8, "lw": 8, "wow": 12}
 
+    header = (
+        f"{'Metric'.center(CW['label'])} | "
+        f"{'MTD'.center(CW['mtd'])} | "
+        f"{'LMTD'.center(CW['lmtd'])} | "
+        f"{'MTD Δ'.center(CW['chg'])} | "
+        f"{'D-1'.center(CW['d1'])} | "
+        f"{'Cur Wk'.center(CW['cw'])} | "
+        f"{'Lst Wk'.center(CW['lw'])} | "
+        f"{'WoW Δ'.center(CW['wow'])}"
+    )
+    sep = "-" * len(header)
     lines = [date_line, "", header, sep]
 
     for key, label in zip(KEYS, LABELS):
@@ -215,18 +228,29 @@ def build_summary_block(data: dict) -> str:
         mtd_chg = color_chg(key, mtd_v, lmtd_v)
         wow_chg = color_chg(key, cw_v, lw_v)
         lines.append(
-            f"{label:<16} | {fmt(key,mtd_v):>8} | {fmt(key,lmtd_v):>8} | {mtd_chg:<14} | "
-            f"{fmt(key,d1_v):>8} | {fmt(key,cw_v):>8} | {fmt(key,lw_v):>8} | {wow_chg}"
+            f"{label:<{CW['label']}} | "
+            f"{fmt(key,mtd_v).center(CW['mtd'])} | "
+            f"{fmt(key,lmtd_v).center(CW['lmtd'])} | "
+            f"{mtd_chg.center(CW['chg'])} | "
+            f"{fmt(key,d1_v).center(CW['d1'])} | "
+            f"{fmt(key,cw_v).center(CW['cw'])} | "
+            f"{fmt(key,lw_v).center(CW['lw'])} | "
+            f"{wow_chg.center(CW['wow'])}"
         )
     return "\n".join(lines)
 
 
 def build_dod_block(data: dict) -> str:
     rows = data["dod"]
-    header = f"{'Date':<9}" + "".join(f"{lbl:>10}" for lbl in ["WL", "Listing", "Live", "WL→Live%", "Buyers", "Revenue"])
-    lines  = [header, "─" * len(header)]
+    cols  = ["WL", "Listing", "Live", "WL_Live", "Buyers", "Revenue"]
+    hdrs  = ["WL", "Listing", "Live", "WL→Live%", "Buyers", "Revenue"]
+    widths = [7, 8, 7, 9, 8, 9]
+
+    header = f"{'Date'.center(8)} | " + " | ".join(h.center(w) for h, w in zip(hdrs, widths))
+    sep    = "-" * len(header)
+    lines  = [header, sep]
+
     for row in rows:
-        # find date value
         date_val = None
         for k, v in row.items():
             if "date" in k.lower() or "Date" in k:
@@ -235,17 +259,10 @@ def build_dod_block(data: dict) -> str:
         try:
             date_str = datetime.fromisoformat(str(date_val)).strftime("%d-%b")
         except Exception:
-            date_str = str(date_val)[:9]
+            date_str = str(date_val)[:8]
 
-        vals = [
-            fmt("WL",      get_col(row, "WL")),
-            fmt("Listing", get_col(row, "Listing")),
-            fmt("Live",    get_col(row, "Live")),
-            fmt("WL_Live", get_col(row, "WL_Live")),
-            fmt("Buyers",  get_col(row, "Buyers")),
-            fmt("Revenue", get_col(row, "Revenue")),
-        ]
-        lines.append(f"{date_str:<9}" + "".join(f"{v:>10}" for v in vals))
+        vals = [fmt(k, get_col(row, k)) for k in cols]
+        lines.append(f"{date_str.center(8)} | " + " | ".join(v.center(w) for v, w in zip(vals, widths)))
     return "\n".join(lines)
 
 
