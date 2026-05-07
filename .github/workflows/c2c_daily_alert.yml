@@ -17,12 +17,11 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install pyadomd azure-identity anthropic requests
+        run: pip install pyadomd azure-identity requests
 
       - name: Run C2C alert
         env:
           SLACK_WEBHOOK_URL:    ${{ secrets.SLACK_WEBHOOK_URL }}
-          ANTHROPIC_API_KEY:    ${{ secrets.ANTHROPIC_API_KEY }}
           AZURE_TENANT_ID:      ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID:      ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET:  ${{ secrets.AZURE_CLIENT_SECRET }}

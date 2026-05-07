@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "C2C Dashboard API (FastAPI + Snowflake)",
+      "runtimeExecutable": "C:/Program Files/Python313/python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--app-dir", "C:/Users/18855/Downloads/aod_api"],
+      "port": 8000
+    },
+    {
+      "name": "Dashboard HTML (Static File Server)",
+      "runtimeExecutable": "C:/Program Files/Python313/python.exe",
+      "runtimeArgs": ["-m", "http.server", "8765", "--directory", "C:/Users/18855/Downloads"],
+      "port": 8765
+    }
+  ]
+}
