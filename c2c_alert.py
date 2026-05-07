@@ -2,12 +2,14 @@ import os
 import requests
 from datetime import datetime, timedelta
 from azure.identity import ClientSecretCredential
+import anthropic
 
 # ── CONFIG ───────────────────────────────────────────────────────────────────
 SLACK_WEBHOOK_URL   = os.environ["SLACK_WEBHOOK_URL"]
 AZURE_TENANT_ID     = os.environ["AZURE_TENANT_ID"]
 AZURE_CLIENT_ID     = os.environ["AZURE_CLIENT_ID"]
 AZURE_CLIENT_SECRET = os.environ["AZURE_CLIENT_SECRET"]
+ANTHROPIC_API_KEY   = os.environ["ANTHROPIC_API_KEY"]
 
 PBI_DATASET_ID = "398f2429-ae2f-4704-b784-c3a345d9d6a5"
 
@@ -105,7 +107,36 @@ def fetch_all(token: str) -> dict:
     )
     dod = run_dax(token, dod_q)
 
-    return {"summary": summary[0] if summary else {}, "dod": dod, "dr": dr}
+    # ── Region breakdown (MTD) ───────────────────────────────────────────────
+    region_q = (
+        f"EVALUATE CALCULATETABLE("
+        f"ADDCOLUMNS(VALUES(MASTER_DATA[REGION]), "
+        f"\"WL\", CALCULATE([Workable Leads]), "
+        f"\"Live\", CALCULATE([LISTING LIVE]), "
+        f"\"Revenue\", CALCULATE([Listing Revenue]), "
+        f"\"WL_Live\", CALCULATE([Listing Conversion])), "
+        f"'CALENDAR'[Date] >= DATE({dr['mtd_start'].year},{dr['mtd_start'].month},{dr['mtd_start'].day}), "
+        f"'CALENDAR'[Date] <= DATE({dr['d1'].year},{dr['d1'].month},{dr['d1'].day})"
+        f") ORDER BY [Revenue] DESC"
+    )
+    region_data = run_dax(token, region_q)
+
+    # ── City breakdown (MTD) ─────────────────────────────────────────────────
+    city_q = (
+        f"EVALUATE CALCULATETABLE("
+        f"ADDCOLUMNS(VALUES(MASTER_DATA[CITY_NAME]), "
+        f"\"WL\", CALCULATE([Workable Leads]), "
+        f"\"Live\", CALCULATE([LISTING LIVE]), "
+        f"\"Revenue\", CALCULATE([Listing Revenue]), "
+        f"\"WL_Live\", CALCULATE([Listing Conversion])), "
+        f"'CALENDAR'[Date] >= DATE({dr['mtd_start'].year},{dr['mtd_start'].month},{dr['mtd_start'].day}), "
+        f"'CALENDAR'[Date] <= DATE({dr['d1'].year},{dr['d1'].month},{dr['d1'].day})"
+        f") ORDER BY [Revenue] DESC"
+    )
+    city_data = run_dax(token, city_q)
+
+    return {"summary": summary[0] if summary else {}, "dod": dod, "dr": dr,
+            "region_data": region_data, "city_data": city_data}
 
 
 def get_val(row: dict, prefix: str, key: str):
@@ -206,16 +237,90 @@ def build_dod_block(data: dict) -> str:
     return "\n".join(lines)
 
 
+def get_ai_insights(data: dict) -> str:
+    row    = data["summary"]
+    dr     = data["dr"]
+    d      = lambda dt: dt.strftime("%d-%b")
+
+    def sv(prefix, key):
+        v = get_val(row, prefix, key)
+        return fmt(key, v) if v is not None else "—"
+
+    def sc(key, p1, p2):
+        return chg(key, get_val(row, p1, key), get_val(row, p2, key))
+
+    # top 3 / bottom 3 regions by revenue
+    valid_regions = [r for r in data["region_data"] if get_col(r, "Revenue")]
+    top_regions    = valid_regions[:3]
+    bottom_regions = valid_regions[-3:][::-1]
+
+    # top 3 / bottom 3 cities by revenue
+    valid_cities  = [c for c in data["city_data"] if get_col(c, "Revenue")]
+    top_cities    = valid_cities[:3]
+    bottom_cities = valid_cities[-3:][::-1]
+
+    def region_name(r): return get_col(r, "REGION") or get_col(r, "MASTER_DATA[REGION]") or "?"
+    def city_name(c):   return get_col(c, "CITY_NAME") or get_col(c, "MASTER_DATA[CITY_NAME]") or "?"
+    def rev(r):         return fmt("Revenue", get_col(r, "Revenue"))
+    def live(r):        return fmt("Live", get_col(r, "Live"))
+    def conv(r):        return fmt("WL_Live", get_col(r, "WL_Live"))
+
+    prompt = f"""You are a senior analyst for Cars24 C2C Marketplace. Analyze this daily data and give sharp, actionable insights.
+
+DATE: {d(dr['d1'])} (D-1)
+MTD period: {d(dr['mtd_start'])} to {d(dr['d1'])}
+LMTD period: {d(dr['lmtd_start'])} to {d(dr['lmtd_end'])}
+
+NATIONAL SUMMARY:
+Metric         MTD       LMTD      Δ        D-1       Curr Wk   Last Wk   Δ
+Workable Leads {sv('MTD','WL')}  {sv('LMTD','WL')}  {sc('WL','MTD','LMTD')}  {sv('D1','WL')}  {sv('CW','WL')}  {sv('LW','WL')}  {sc('WL','CW','LW')}
+Listing        {sv('MTD','Listing')}  {sv('LMTD','Listing')}  {sc('Listing','MTD','LMTD')}  {sv('D1','Listing')}  {sv('CW','Listing')}  {sv('LW','Listing')}  {sc('Listing','CW','LW')}
+Listing Live   {sv('MTD','Live')}  {sv('LMTD','Live')}  {sc('Live','MTD','LMTD')}  {sv('D1','Live')}  {sv('CW','Live')}  {sv('LW','Live')}  {sc('Live','CW','LW')}
+WL→Live %      {sv('MTD','WL_Live')}  {sv('LMTD','WL_Live')}  {sc('WL_Live','MTD','LMTD')}  {sv('D1','WL_Live')}  {sv('CW','WL_Live')}  {sv('LW','WL_Live')}  {sc('WL_Live','CW','LW')}
+Unique Buyers  {sv('MTD','Buyers')}  {sv('LMTD','Buyers')}  {sc('Buyers','MTD','LMTD')}  {sv('D1','Buyers')}  {sv('CW','Buyers')}  {sv('LW','Buyers')}  {sc('Buyers','CW','LW')}
+Revenue        {sv('MTD','Revenue')}  {sv('LMTD','Revenue')}  {sc('Revenue','MTD','LMTD')}  {sv('D1','Revenue')}  {sv('CW','Revenue')}  {sv('LW','Revenue')}  {sc('Revenue','CW','LW')}
+
+TOP 3 REGIONS (MTD by Revenue):
+{chr(10).join(f"{i+1}. {region_name(r)} — Revenue: {rev(r)}, Live: {live(r)}, WL→Live: {conv(r)}" for i, r in enumerate(top_regions))}
+
+BOTTOM 3 REGIONS (MTD by Revenue):
+{chr(10).join(f"{i+1}. {region_name(r)} — Revenue: {rev(r)}, Live: {live(r)}, WL→Live: {conv(r)}" for i, r in enumerate(bottom_regions))}
+
+TOP 3 CITIES (MTD by Revenue):
+{chr(10).join(f"{i+1}. {city_name(c)} — Revenue: {rev(c)}, Live: {live(c)}, WL→Live: {conv(c)}" for i, c in enumerate(top_cities))}
+
+BOTTOM 3 CITIES (MTD by Revenue):
+{chr(10).join(f"{i+1}. {city_name(c)} — Revenue: {rev(c)}, Live: {live(c)}, WL→Live: {conv(c)}" for i, c in enumerate(bottom_cities))}
+
+Write a concise daily insight report with 3 sections:
+1. *National Overview* — what's the overall health, key concern, and bright spot (3-4 lines)
+2. *Region Spotlight* — top and bottom regions, what's driving it (3-4 lines)
+3. *City Spotlight* — top and bottom cities, any notable patterns (3-4 lines)
+
+Be specific with numbers. Use plain English. No bullet points — write in paragraph form."""
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    resp   = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=600,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return resp.content[0].text
+
+
 def send_slack(data: dict):
     date_str = datetime.now().strftime("%d %b %Y")
     summary  = build_summary_block(data)
     dod      = build_dod_block(data)
+    insights = get_ai_insights(data)
 
     blocks = [
         {"type": "header", "text": {"type": "plain_text", "text": f"C2C Dashboard Report — {date_str}"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*📊 Summary (MTD vs LMTD | D-1 | Week vs Last Week)*\n```{summary}```"}},
         {"type": "divider"},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*📈 Last 7 Days (Day over Day)*\n```{dod}```"}},
+        {"type": "divider"},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*🤖 AI Insights — National | Region | City*\n{insights}"}},
     ]
 
     resp = requests.post(SLACK_WEBHOOK_URL, json={"blocks": blocks})
