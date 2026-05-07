@@ -177,34 +177,45 @@ def chg(key: str, new_val, old_val) -> str:
     return f"{pct:+.1f}%"
 
 
+def color_chg(key: str, new_val, old_val) -> str:
+    if new_val is None or old_val is None or old_val == 0:
+        return "—"
+    if key in PCT_METRICS:
+        diff = (new_val - old_val) * 100
+        sign = "✅ ▲" if diff >= 0 else "🚩 ▼"
+        return f"{sign} {abs(diff):.1f}pp"
+    pct = ((new_val - old_val) / abs(old_val)) * 100
+    sign = "✅ ▲" if pct >= 0 else "🚩 ▼"
+    return f"{sign} {abs(pct):.1f}%"
+
+
 def build_summary_block(data: dict) -> str:
     row = data["summary"]
     dr  = data["dr"]
+    d   = lambda dt: dt.strftime("%d-%b")
 
-    d = lambda dt: dt.strftime("%d-%b")
-    mtd_range  = f"MTD  {d(dr['mtd_start'])}→{d(dr['d1'])}"
-    lmtd_range = f"LMTD {d(dr['lmtd_start'])}→{d(dr['lmtd_end'])}"
-    cw_range   = f"CW   {d(dr['cw_start'])}→{d(dr['cw_end'])}"
-    lw_range   = f"LW   {d(dr['lw_start'])}→{d(dr['lw_end'])}"
+    header = (
+        f"*MTD {d(dr['mtd_start'])}→{d(dr['d1'])}  |  "
+        f"D-1: {d(dr['d1'])}  |  "
+        f"CW {d(dr['cw_start'])}→{d(dr['cw_end'])}  |  "
+        f"LW {d(dr['lw_start'])}→{d(dr['lw_end'])}*"
+    )
 
-    header = (f"{'Metric':<16} {'MTD':>8} {'LMTD':>8} {'Δ':>7}  "
-              f"{'D-1':>8}  {'Curr Wk':>8} {'Last Wk':>8} {'Δ':>7}")
-    sep    = "─" * len(header)
+    lines = [header, ""]
+    lines.append(f"`{'Metric':<16}` `{'MTD':>8}` `{'LMTD':>8}` `{'Δ MTD':<14}` `{'D-1':>8}` `{'Curr Wk':>8}` `{'Last Wk':>8}` Δ WoW")
+    lines.append("─" * 90)
 
-    lines = [
-        f"{mtd_range}  |  D-1: {d(dr['d1'])}  |  {cw_range}  |  {lw_range}",
-        "",
-        header, sep,
-    ]
     for key, label in zip(KEYS, LABELS):
         mtd_v  = get_val(row, "MTD",  key)
         lmtd_v = get_val(row, "LMTD", key)
         d1_v   = get_val(row, "D1",   key)
         cw_v   = get_val(row, "CW",   key)
         lw_v   = get_val(row, "LW",   key)
+        mtd_chg = color_chg(key, mtd_v, lmtd_v)
+        wow_chg = color_chg(key, cw_v, lw_v)
         lines.append(
-            f"{label:<16} {fmt(key,mtd_v):>8} {fmt(key,lmtd_v):>8} {chg(key,mtd_v,lmtd_v):>7}  "
-            f"{fmt(key,d1_v):>8}  {fmt(key,cw_v):>8} {fmt(key,lw_v):>8} {chg(key,cw_v,lw_v):>7}"
+            f"`{label:<16}` `{fmt(key,mtd_v):>8}` `{fmt(key,lmtd_v):>8}` {mtd_chg:<20} "
+            f"`{fmt(key,d1_v):>8}` `{fmt(key,cw_v):>8}` `{fmt(key,lw_v):>8}` {wow_chg}"
         )
     return "\n".join(lines)
 
@@ -354,15 +365,12 @@ def build_changes_block(data: dict) -> str:
 def send_slack(data: dict):
     date_str = datetime.now().strftime("%d %b %Y")
     summary  = build_summary_block(data)
-    changes  = build_changes_block(data)
     dod      = build_dod_block(data)
     insights = get_ai_insights(data)
 
     blocks = [
         {"type": "header", "text": {"type": "plain_text", "text": f"C2C Dashboard Report — {date_str}"}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*📊 Summary (MTD vs LMTD | D-1 | Week vs Last Week)*\n```{summary}```"}},
-        {"type": "divider"},
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*📉 Change Indicators*\n{changes}"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*📊 Summary (MTD vs LMTD | D-1 | Week vs Last Week)*\n{summary}"}},
         {"type": "divider"},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*📈 Last 7 Days (Day over Day)*\n```{dod}```"}},
         {"type": "divider"},
