@@ -11,135 +11,203 @@ AZURE_CLIENT_SECRET = os.environ["AZURE_CLIENT_SECRET"]
 
 PBI_DATASET_ID = "398f2429-ae2f-4704-b784-c3a345d9d6a5"
 
-THRESHOLDS = {
-    "listing_live_drop_pct":     20,
-    "revenue_drop_pct":          20,
-    "offer_acceptance_drop_pct":  5,
+MEASURES = {
+    "WL":      "Workable Leads",
+    "Listing": "LISTING",
+    "Live":    "LISTING LIVE",
+    "WL_Live": "Listing Conversion",
+    "Buyers":  "Unique Buyers",
+    "LP_TP":   "LP/TP",
+    "FLP_TP":  "FLP/TP",
+    "Revenue": "Listing Revenue",
 }
+
+LABELS = {
+    "WL":      "Workable Leads",
+    "Listing": "Listing",
+    "Live":    "Listing Live",
+    "WL_Live": "WL→Live %",
+    "Buyers":  "Unique Buyers",
+    "LP_TP":   "LP/TP",
+    "FLP_TP":  "FLP/TP",
+    "Revenue": "Revenue",
+}
+
+# metrics shown as % (multiply by 100)
+PCT_METRICS  = {"WL_Live"}
+# metrics shown as ratio (2 decimal places)
+RATIO_METRICS = {"LP_TP", "FLP_TP"}
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 def get_token():
-    credential = ClientSecretCredential(
-        tenant_id=AZURE_TENANT_ID,
-        client_id=AZURE_CLIENT_ID,
-        client_secret=AZURE_CLIENT_SECRET,
-    )
-    return credential.get_token("https://analysis.windows.net/powerbi/api/.default").token
+    cred = ClientSecretCredential(AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET)
+    return cred.get_token("https://analysis.windows.net/powerbi/api/.default").token
 
 
 def run_dax(token: str, query: str) -> list[dict]:
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    url = f"https://api.powerbi.com/v1.0/myorg/datasets/{PBI_DATASET_ID}/executeQueries"
+    url  = f"https://api.powerbi.com/v1.0/myorg/datasets/{PBI_DATASET_ID}/executeQueries"
     body = {"queries": [{"query": query}], "serializerSettings": {"includeNulls": True}}
-
     resp = requests.post(url, headers=headers, json=body)
     resp.raise_for_status()
-
-    rows = resp.json()["results"][0]["tables"][0].get("rows", [])
-    return rows
+    return resp.json()["results"][0]["tables"][0].get("rows", [])
 
 
-def fetch_metrics(token: str) -> list[dict]:
-    dax = """
-    EVALUATE
-    CALCULATETABLE(
-        ADDCOLUMNS(
-            VALUES('CALENDAR'[Date]),
-            "Listing Live",       [LISTING LIVE],
-            "Listing Revenue",    [Listing Revenue],
-            "Offer Acceptance",   [Offer Acceptance %]
-        ),
-        'CALENDAR'[Date] >= TODAY() - 2,
-        'CALENDAR'[Date] <= TODAY()
+def measure_row(alias_prefix: str, date_filter: str) -> str:
+    cols = ", ".join(
+        f'"{alias_prefix}_{k}", CALCULATE([{v}], {date_filter})'
+        for k, v in MEASURES.items()
     )
-    ORDER BY 'CALENDAR'[Date] ASC
-    """
-    return run_dax(token, dax)
+    return cols
 
 
-def build_summary(rows: list[dict]) -> tuple[str, bool]:
-    if len(rows) < 2:
-        return "Not enough data for comparison (need at least 2 days).", False
+def fetch_all(token: str) -> dict:
+    # ── MTD vs LMTD ──────────────────────────────────────────────────────────
+    mtd_filter  = "FILTER(ALL('CALENDAR'), 'CALENDAR'[Date] >= DATE(YEAR(TODAY()), MONTH(TODAY()), 1) && 'CALENDAR'[Date] <= TODAY()-1)"
+    lmtd_filter = "FILTER(ALL('CALENDAR'), 'CALENDAR'[Date] >= EOMONTH(TODAY(),-2)+1 && 'CALENDAR'[Date] <= EDATE(TODAY()-1,-1))"
 
-    prev  = rows[-2]
-    today = rows[-1]
+    mtd_lmtd = run_dax(token, f"EVALUATE ROW({measure_row('MTD', mtd_filter)}, {measure_row('LMTD', lmtd_filter)})")
 
-    def pct_change(new, old):
-        return ((new - old) / old) * 100 if old else 0
+    # ── D-1 ──────────────────────────────────────────────────────────────────
+    d1_filter = "FILTER(ALL('CALENDAR'), 'CALENDAR'[Date] = TODAY()-1)"
+    d1 = run_dax(token, f"EVALUATE ROW({measure_row('D1', d1_filter)})")
 
-    # DAX REST API prefixes column names with table name
-    def get(row, key):
-        for k, v in row.items():
-            if k.endswith(f"[{key}]") or k == key:
-                return v or 0
-        return 0
+    # ── Current Week vs Last Week ─────────────────────────────────────────────
+    # Week starts Monday; CW = Mon this week to D-1, LW = same span previous week
+    cw_filter = "FILTER(ALL('CALENDAR'), 'CALENDAR'[Date] >= TODAY() - WEEKDAY(TODAY(),2) + 1 && 'CALENDAR'[Date] <= TODAY()-1)"
+    lw_filter = "FILTER(ALL('CALENDAR'), 'CALENDAR'[Date] >= TODAY() - WEEKDAY(TODAY(),2) - 6 && 'CALENDAR'[Date] <= TODAY() - WEEKDAY(TODAY(),2) - 1 + (TODAY()-1 - (TODAY() - WEEKDAY(TODAY(),2) + 1)))"
+    wk = run_dax(token, f"EVALUATE ROW({measure_row('CW', cw_filter)}, {measure_row('LW', lw_filter)})")
 
-    ll_prev  = get(prev,  "Listing Live")
-    ll_today = get(today, "Listing Live")
-    rv_prev  = get(prev,  "Listing Revenue")
-    rv_today = get(today, "Listing Revenue")
-    oa_prev  = get(prev,  "Offer Acceptance") * 100
-    oa_today = get(today, "Offer Acceptance") * 100
+    # ── Last 7 days DoD ───────────────────────────────────────────────────────
+    cols_dod = ", ".join(f'"{k}", [{v}]' for k, v in MEASURES.items())
+    dod = run_dax(token, f"""
+        EVALUATE
+        CALCULATETABLE(
+            ADDCOLUMNS(VALUES('CALENDAR'[Date]), {cols_dod}),
+            'CALENDAR'[Date] >= TODAY()-7,
+            'CALENDAR'[Date] <= TODAY()-1
+        )
+        ORDER BY 'CALENDAR'[Date] ASC
+    """)
 
-    ll_chg  = pct_change(ll_today, ll_prev)
-    rev_chg = pct_change(rv_today, rv_prev)
-    oa_diff = oa_today - oa_prev
-
-    alert_triggered = (
-        ll_chg  < -THRESHOLDS["listing_live_drop_pct"]        or
-        rev_chg < -THRESHOLDS["revenue_drop_pct"]             or
-        oa_diff < -THRESHOLDS["offer_acceptance_drop_pct"]
-    )
-
-    summary = (
-        f"C2C Dashboard — Daily Metrics\n"
-        f"Date: {datetime.now().strftime('%d %b %Y')}\n\n"
-        f"{'Metric':<20} {'Yesterday':>12} {'Today':>12} {'Change':>10}\n"
-        f"{'-'*56}\n"
-        f"{'Listing Live':<20} {int(ll_prev):>12,} {int(ll_today):>12,} {ll_chg:>+9.1f}%\n"
-        f"{'Listing Revenue':<20} {rv_prev:>12,.0f} {rv_today:>12,.0f} {rev_chg:>+9.1f}%\n"
-        f"{'Offer Acceptance':<20} {oa_prev:>11.1f}% {oa_today:>11.1f}% {oa_diff:>+8.1f}pp\n"
-    )
-
-    return summary, alert_triggered
+    return {"mtd_lmtd": mtd_lmtd[0] if mtd_lmtd else {}, "d1": d1[0] if d1 else {},
+            "wk": wk[0] if wk else {}, "dod": dod}
 
 
-def send_slack_alert(summary: str, is_alert: bool):
-    color  = "#ff4444" if is_alert else "#36a64f"
-    header = ":rotating_light: *ALERT — Metrics need attention*" if is_alert else ":white_check_mark: *Daily C2C Dashboard Report*"
+def fmt(key: str, val) -> str:
+    if val is None:
+        return "—"
+    if key in PCT_METRICS:
+        return f"{val*100:.1f}%"
+    if key in RATIO_METRICS:
+        return f"{val:.2f}x"
+    if isinstance(val, float):
+        return f"{val:,.0f}"
+    return f"{int(val):,}"
 
-    payload = {
-        "attachments": [{
-            "color": color,
-            "blocks": [
-                {"type": "section", "text": {"type": "mrkdwn", "text": header}},
-                {"type": "section", "text": {"type": "mrkdwn", "text": f"```{summary}```"}},
-            ]
-        }]
-    }
 
-    resp = requests.post(SLACK_WEBHOOK_URL, json=payload)
+def pct_chg(key: str, new, old) -> str:
+    if not old or old == 0:
+        return "—"
+    if key in PCT_METRICS:
+        diff = (new - old) * 100
+        return f"{diff:+.1f}pp"
+    chg = ((new - old) / abs(old)) * 100
+    return f"{chg:+.1f}%"
+
+
+def get_val(row: dict, prefix: str, key: str):
+    for k, v in row.items():
+        if k.endswith(f"[{prefix}_{key}]") or k == f"{prefix}_{key}":
+            return v
+    return None
+
+
+def get_dod_val(row: dict, key: str):
+    for k, v in row.items():
+        if k.endswith(f"[{key}]") or k == key:
+            return v
+    return None
+
+
+def build_mtd_block(data: dict) -> str:
+    row = data["mtd_lmtd"]
+    lines = [f"{'Metric':<18} {'MTD':>10} {'LMTD':>10} {'Chg':>8}"]
+    lines.append("─" * 50)
+    for k in MEASURES:
+        mtd_val  = get_val(row, "MTD",  k)
+        lmtd_val = get_val(row, "LMTD", k)
+        lines.append(f"{LABELS[k]:<18} {fmt(k, mtd_val):>10} {fmt(k, lmtd_val):>10} {pct_chg(k, mtd_val, lmtd_val):>8}")
+    return "\n".join(lines)
+
+
+def build_d1_block(data: dict) -> str:
+    row = data["d1"]
+    lines = [f"{'Metric':<18} {'D-1 Value':>12}"]
+    lines.append("─" * 32)
+    for k in MEASURES:
+        val = get_val(row, "D1", k)
+        lines.append(f"{LABELS[k]:<18} {fmt(k, val):>12}")
+    return "\n".join(lines)
+
+
+def build_week_block(data: dict) -> str:
+    row = data["wk"]
+    lines = [f"{'Metric':<18} {'Curr Wk':>10} {'Last Wk':>10} {'Chg':>8}"]
+    lines.append("─" * 50)
+    for k in MEASURES:
+        cw_val = get_val(row, "CW", k)
+        lw_val = get_val(row, "LW", k)
+        lines.append(f"{LABELS[k]:<18} {fmt(k, cw_val):>10} {fmt(k, lw_val):>10} {pct_chg(k, cw_val, lw_val):>8}")
+    return "\n".join(lines)
+
+
+def build_dod_block(data: dict) -> str:
+    rows = data["dod"]
+    # Show key metrics only for readability: WL, Live, Revenue, WL_Live
+    keys = ["WL", "Live", "WL_Live", "Revenue"]
+    header = f"{'Date':<10}" + "".join(f"{LABELS[k]:>12}" for k in keys)
+    lines  = [header, "─" * (10 + 12 * len(keys))]
+    for row in rows:
+        date_val = get_dod_val(row, "Date") or get_dod_val(row, "CALENDAR[Date]") or ""
+        try:
+            date_str = datetime.fromisoformat(str(date_val)).strftime("%d-%b")
+        except Exception:
+            date_str = str(date_val)[:10]
+        line = f"{date_str:<10}" + "".join(f"{fmt(k, get_dod_val(row, k)):>12}" for k in keys)
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def send_slack(data: dict):
+    date_str = datetime.now().strftime("%d %b %Y")
+
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": f"C2C Dashboard Report — {date_str}"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "*📊 MTD vs LMTD*\n```" + build_mtd_block(data) + "```"}},
+        {"type": "divider"},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "*📅 D-1 (Yesterday)*\n```" + build_d1_block(data) + "```"}},
+        {"type": "divider"},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "*📆 Current Week vs Last Week*\n```" + build_week_block(data) + "```"}},
+        {"type": "divider"},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "*📈 Last 7 Days (DoD)*\n```" + build_dod_block(data) + "```"}},
+    ]
+
+    resp = requests.post(SLACK_WEBHOOK_URL, json={"blocks": blocks})
     if resp.status_code != 200:
         print(f"Slack error: {resp.status_code} — {resp.text}")
     else:
-        print("Slack alert sent successfully.")
+        print("Sent to Slack successfully.")
 
 
 def main():
     print("Getting token...")
     token = get_token()
-
-    print("Querying metrics...")
-    rows = fetch_metrics(token)
-    print(f"Got {len(rows)} rows")
-
-    print("Building summary...")
-    summary, is_alert = build_summary(rows)
-    print(summary)
-
+    print("Fetching all metrics...")
+    data = fetch_all(token)
     print("Sending to Slack...")
-    send_slack_alert(summary, is_alert)
+    send_slack(data)
 
 
 if __name__ == "__main__":
