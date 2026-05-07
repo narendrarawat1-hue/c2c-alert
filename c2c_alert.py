@@ -243,8 +243,8 @@ def build_summary_block(data: dict) -> str:
 def build_dod_block(data: dict) -> str:
     rows = data["dod"]
     cols  = ["WL", "Listing", "Live", "WL_Live", "Buyers", "Revenue"]
-    hdrs  = ["WL", "Listing", "Live", "WL→Live%", "Buyers", "Revenue"]
-    widths = [7, 8, 7, 9, 8, 9]
+    hdrs  = ["Workable Leads", "Listing", "Live", "WL→Live%", "Buyers", "Revenue"]
+    widths = [14, 8, 7, 9, 8, 9]
 
     header = f"{'Date'.center(8)} | " + " | ".join(h.center(w) for h, w in zip(hdrs, widths))
     sep    = "-" * len(header)
