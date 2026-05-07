@@ -292,12 +292,29 @@ TOP 3 CITIES (MTD by Revenue):
 BOTTOM 3 CITIES (MTD by Revenue):
 {chr(10).join(f"{i+1}. {city_name(c)} — Revenue: {rev(c)}, Live: {live(c)}, WL→Live: {conv(c)}" for i, c in enumerate(bottom_cities))}
 
-Write a concise daily insight report with 3 sections:
-1. *National Overview* — what's the overall health, key concern, and bright spot (3-4 lines)
-2. *Region Spotlight* — top and bottom regions, what's driving it (3-4 lines)
-3. *City Spotlight* — top and bottom cities, any notable patterns (3-4 lines)
+Write a concise daily insight report with 3 sections using bullet points.
+IMPORTANT RULES:
+- Never use "YoY". Always say "vs LMTD" for month comparisons and "vs Last Week" for week comparisons.
+- Use bullet points (•) for every point, not paragraphs.
+- Be specific with numbers from the data above.
+- Keep each bullet to 1-2 lines max.
 
-Be specific with numbers. Use plain English. No bullet points — write in paragraph form."""
+Format exactly like this:
+
+*National Overview*
+• [insight with specific numbers]
+• [key concern with specific numbers]
+• [bright spot with specific numbers]
+
+*Region Spotlight*
+• [top region insight]
+• [bottom region insight]
+• [actionable observation]
+
+*City Spotlight*
+• [top city insight]
+• [bottom city insight]
+• [actionable observation]"""
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     resp   = client.messages.create(
@@ -308,15 +325,44 @@ Be specific with numbers. Use plain English. No bullet points — write in parag
     return resp.content[0].text
 
 
+def build_changes_block(data: dict) -> str:
+    row = data["summary"]
+    lines = []
+    for key, label in zip(KEYS, LABELS):
+        mtd_v  = get_val(row, "MTD",  key)
+        lmtd_v = get_val(row, "LMTD", key)
+        cw_v   = get_val(row, "CW",   key)
+        lw_v   = get_val(row, "LW",   key)
+
+        def indicator(new_val, old_val):
+            if new_val is None or old_val is None or old_val == 0:
+                return ""
+            diff = new_val - old_val
+            if key in PCT_METRICS:
+                pct = diff * 100
+            else:
+                pct = (diff / abs(old_val)) * 100
+            arrow = "🟢 ▲" if pct >= 0 else "🔴 ▼"
+            return f"{arrow} {abs(pct):.1f}{'pp' if key in PCT_METRICS else '%'}"
+
+        mtd_ind = indicator(mtd_v, lmtd_v)
+        wk_ind  = indicator(cw_v, lw_v)
+        lines.append(f"`{label:<16}` MTD: {mtd_ind:<18} WoW: {wk_ind}")
+    return "\n".join(lines)
+
+
 def send_slack(data: dict):
     date_str = datetime.now().strftime("%d %b %Y")
     summary  = build_summary_block(data)
+    changes  = build_changes_block(data)
     dod      = build_dod_block(data)
     insights = get_ai_insights(data)
 
     blocks = [
         {"type": "header", "text": {"type": "plain_text", "text": f"C2C Dashboard Report — {date_str}"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*📊 Summary (MTD vs LMTD | D-1 | Week vs Last Week)*\n```{summary}```"}},
+        {"type": "divider"},
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*📉 Change Indicators*\n{changes}"}},
         {"type": "divider"},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*📈 Last 7 Days (Day over Day)*\n```{dod}```"}},
         {"type": "divider"},
