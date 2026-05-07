@@ -9,8 +9,7 @@ AZURE_TENANT_ID     = os.environ["AZURE_TENANT_ID"]
 AZURE_CLIENT_ID     = os.environ["AZURE_CLIENT_ID"]
 AZURE_CLIENT_SECRET = os.environ["AZURE_CLIENT_SECRET"]
 
-PBI_WORKSPACE_NAME = "C2C_MarketPlace"
-PBI_DATASET_NAME   = "Cars24_C2C_MarketPlace"
+PBI_DATASET_ID = "398f2429-ae2f-4704-b784-c3a345d9d6a5"
 
 THRESHOLDS = {
     "listing_live_drop_pct":     20,
@@ -29,21 +28,9 @@ def get_token():
     return credential.get_token("https://analysis.windows.net/powerbi/api/.default").token
 
 
-def get_dataset_id(token: str) -> tuple[str, str]:
-    headers = {"Authorization": f"Bearer {token}"}
-
-    groups = requests.get("https://api.powerbi.com/v1.0/myorg/groups", headers=headers).json()
-    group_id = next(g["id"] for g in groups["value"] if g["name"] == PBI_WORKSPACE_NAME)
-
-    datasets = requests.get(f"https://api.powerbi.com/v1.0/myorg/groups/{group_id}/datasets", headers=headers).json()
-    dataset_id = next(d["id"] for d in datasets["value"] if d["name"] == PBI_DATASET_NAME)
-
-    return group_id, dataset_id
-
-
-def run_dax(token: str, group_id: str, dataset_id: str, query: str) -> list[dict]:
+def run_dax(token: str, query: str) -> list[dict]:
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    url = f"https://api.powerbi.com/v1.0/myorg/groups/{group_id}/datasets/{dataset_id}/executeQueries"
+    url = f"https://api.powerbi.com/v1.0/myorg/datasets/{PBI_DATASET_ID}/executeQueries"
     body = {"queries": [{"query": query}], "serializerSettings": {"includeNulls": True}}
 
     resp = requests.post(url, headers=headers, json=body)
@@ -53,7 +40,7 @@ def run_dax(token: str, group_id: str, dataset_id: str, query: str) -> list[dict
     return rows
 
 
-def fetch_metrics(token: str, group_id: str, dataset_id: str) -> list[dict]:
+def fetch_metrics(token: str) -> list[dict]:
     dax = """
     EVALUATE
     CALCULATETABLE(
@@ -68,7 +55,7 @@ def fetch_metrics(token: str, group_id: str, dataset_id: str) -> list[dict]:
     )
     ORDER BY 'CALENDAR'[Date] ASC
     """
-    return run_dax(token, group_id, dataset_id, dax)
+    return run_dax(token, dax)
 
 
 def build_summary(rows: list[dict]) -> tuple[str, bool]:
@@ -143,12 +130,8 @@ def main():
     print("Getting token...")
     token = get_token()
 
-    print("Finding workspace and dataset...")
-    group_id, dataset_id = get_dataset_id(token)
-    print(f"Workspace: {group_id} | Dataset: {dataset_id}")
-
     print("Querying metrics...")
-    rows = fetch_metrics(token, group_id, dataset_id)
+    rows = fetch_metrics(token)
     print(f"Got {len(rows)} rows")
 
     print("Building summary...")
