@@ -17,7 +17,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install azure-identity requests anthropic
+        run: pip install azure-identity requests anthropic matplotlib
 
       - name: Run C2C alert
         env:

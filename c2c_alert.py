@@ -1,8 +1,14 @@
 import os
+import io
 import requests
 from datetime import datetime, timedelta
 from azure.identity import ClientSecretCredential
 import anthropic
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.gridspec import GridSpec
 
 # ── CONFIG ───────────────────────────────────────────────────────────────────
 SLACK_WEBHOOK_URL   = os.environ["SLACK_WEBHOOK_URL"]
@@ -407,61 +413,139 @@ def send_slack(data: dict):
         print("Sent to Slack successfully.")
 
 
-def export_pbi_snapshot(token: str) -> bytes | None:
-    """Export the Deep-Dive page from the Power BI report as PNG."""
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    base    = f"https://api.powerbi.com/v1.0/myorg/groups/{PBI_GROUP_ID}/reports/{PBI_REPORT_ID}"
+def generate_dashboard_image(data: dict) -> bytes:
+    """Generate a clean PNG dashboard image from the fetched data."""
+    row = data["summary"]
+    dr  = data["dr"]
+    d   = lambda dt: dt.strftime("%d-%b")
 
-    # Step 1 — find the page ID by name
-    pages_resp = requests.get(f"{base}/pages", headers=headers)
-    if pages_resp.status_code != 200:
-        print(f"Could not fetch pages: {pages_resp.text}")
-        return None
+    # ── collect table rows ────────────────────────────────────────────────────
+    col_headers = ["Metric", "MTD", "LMTD", "MTD Δ", "D-1", "Cur Wk", "Lst Wk", "WoW Δ"]
+    table_rows  = []
+    for key, label in zip(KEYS, LABELS):
+        mtd_v  = get_val(row, "MTD",  key)
+        lmtd_v = get_val(row, "LMTD", key)
+        d1_v   = get_val(row, "D1",   key)
+        cw_v   = get_val(row, "CW",   key)
+        lw_v   = get_val(row, "LW",   key)
+        table_rows.append([
+            label,
+            fmt(key, mtd_v),
+            fmt(key, lmtd_v),
+            color_chg(key, mtd_v, lmtd_v),
+            fmt(key, d1_v),
+            fmt(key, cw_v),
+            fmt(key, lw_v),
+            color_chg(key, cw_v, lw_v),
+        ])
 
-    pages   = pages_resp.json().get("value", [])
-    page    = next((p for p in pages if PBI_PAGE_NAME.lower() in p.get("displayName", "").lower()), None)
-    if not page:
-        print(f"Page '{PBI_PAGE_NAME}' not found. Available: {[p['displayName'] for p in pages]}")
-        return None
+    # ── DoD rows ──────────────────────────────────────────────────────────────
+    dod_col_keys  = ["WL", "Listing", "Live", "WL_Live", "Buyers", "Revenue"]
+    dod_col_hdrs  = ["Date", "Workable Leads", "Listing", "Live", "WL→Live%", "Buyers", "Revenue"]
+    dod_rows = []
+    for r in data["dod"]:
+        date_val = None
+        for k, v in r.items():
+            if "date" in k.lower():
+                date_val = v; break
+        try:
+            ds = datetime.fromisoformat(str(date_val)).strftime("%d-%b")
+        except Exception:
+            ds = str(date_val)[:8]
+        dod_rows.append([ds] + [fmt(k, get_col(r, k)) for k in dod_col_keys])
 
-    page_name = page["name"]
+    # ── figure layout ─────────────────────────────────────────────────────────
+    BG      = "#0f1117"
+    HEADER  = "#1a1d2e"
+    ACC     = "#4f8ef7"
+    WHITE   = "#ffffff"
+    SUBTEXT = "#8b8fa8"
+    GREEN   = "#2ecc71"
+    RED     = "#e74c3c"
+    ROW_A   = "#16192a"
+    ROW_B   = "#1c2035"
 
-    # Step 2 — trigger export
-    export_body = {
-        "format": "PNG",
-        "powerBIReportConfiguration": {
-            "pages": [{"pageName": page_name}]
-        }
-    }
-    export_resp = requests.post(f"{base}/ExportTo", headers=headers, json=export_body)
-    if export_resp.status_code not in (200, 202):
-        print(f"Export failed: {export_resp.text}")
-        return None
+    fig = plt.figure(figsize=(20, 14), facecolor=BG)
+    gs  = GridSpec(3, 1, figure=fig, height_ratios=[0.7, 5, 3.5], hspace=0.35)
 
-    export_id = export_resp.json().get("id")
-    print(f"Export started: {export_id}")
+    # ── title bar ─────────────────────────────────────────────────────────────
+    ax_title = fig.add_subplot(gs[0])
+    ax_title.set_facecolor(HEADER)
+    ax_title.axis("off")
+    date_line = (f"MTD {d(dr['mtd_start'])}→{d(dr['d1'])}  |  D-1: {d(dr['d1'])}  |  "
+                 f"CW {d(dr['cw_start'])}→{d(dr['cw_end'])}  |  LW {d(dr['lw_start'])}→{d(dr['lw_end'])}")
+    ax_title.text(0.5, 0.72, "🚗  C2C Marketplace Dashboard", ha="center", va="center",
+                  fontsize=22, fontweight="bold", color=WHITE, transform=ax_title.transAxes)
+    ax_title.text(0.5, 0.22, date_line, ha="center", va="center",
+                  fontsize=11, color=SUBTEXT, transform=ax_title.transAxes)
 
-    # Step 3 — poll until done
-    import time
-    for _ in range(20):
-        time.sleep(5)
-        status_resp = requests.get(f"{base}/exports/{export_id}", headers=headers)
-        status      = status_resp.json().get("status")
-        print(f"Export status: {status}")
-        if status == "Succeeded":
-            break
-        if status == "Failed":
-            print("Export failed.")
-            return None
+    def draw_table(ax, headers, rows, title):
+        ax.set_facecolor(BG)
+        ax.axis("off")
+        ax.text(0.0, 1.02, title, transform=ax.transAxes, fontsize=13,
+                fontweight="bold", color=ACC, va="bottom")
 
-    # Step 4 — download file
-    file_resp = requests.get(f"{base}/exports/{export_id}/file", headers=headers)
-    if file_resp.status_code == 200:
-        print("Snapshot downloaded successfully.")
-        return file_resp.content
-    else:
-        print(f"Download failed: {file_resp.text}")
-        return None
+        n_cols = len(headers)
+        n_rows = len(rows)
+        col_w  = [0.18] + [0.115] * (n_cols - 1) if n_cols == 8 else [0.10] + [0.135] * (n_cols - 1)
+
+        # header row
+        x = 0.0
+        for i, h in enumerate(headers):
+            ax.text(x + col_w[i] / 2, 0.97, h, transform=ax.transAxes,
+                    ha="center", va="top", fontsize=9.5, fontweight="bold",
+                    color=ACC)
+            x += col_w[i]
+
+        # separator line
+        ax.axhline(y=0.93, xmin=0, xmax=1, color=ACC, linewidth=0.8, transform=ax.transAxes)
+
+        row_h = 0.88 / max(n_rows, 1)
+        for ri, row in enumerate(rows):
+            y_top = 0.92 - ri * row_h
+            bg    = ROW_A if ri % 2 == 0 else ROW_B
+            ax.add_patch(mpatches.FancyBboxPatch(
+                (0, y_top - row_h + 0.005), 1, row_h - 0.005,
+                boxstyle="round,pad=0.002", linewidth=0,
+                facecolor=bg, transform=ax.transAxes, clip_on=False))
+
+            x = 0.0
+            for ci, cell in enumerate(row):
+                cell_str = str(cell)
+                # colour Δ columns
+                if "▲" in cell_str or "✅" in cell_str:
+                    col = GREEN
+                elif "▼" in cell_str or "🚩" in cell_str:
+                    col = RED
+                elif ci == 0:
+                    col = WHITE
+                else:
+                    col = "#c8cce0"
+
+                ax.text(x + col_w[ci] / 2, y_top - row_h / 2, cell_str,
+                        transform=ax.transAxes, ha="center", va="center",
+                        fontsize=8.5, color=col)
+                x += col_w[ci]
+
+    # ── summary table ─────────────────────────────────────────────────────────
+    ax_sum = fig.add_subplot(gs[1])
+    draw_table(ax_sum, col_headers, table_rows, "📊  Summary — MTD vs LMTD | D-1 | Week vs Last Week")
+
+    # ── DoD table ─────────────────────────────────────────────────────────────
+    ax_dod = fig.add_subplot(gs[2])
+    draw_table(ax_dod, dod_col_hdrs, dod_rows, "📈  Last 7 Days — Day over Day")
+
+    # ── footer ────────────────────────────────────────────────────────────────
+    fig.text(0.5, 0.01, f"Generated {datetime.now().strftime('%d %b %Y, %H:%M')} IST  •  Cars24 C2C Marketplace",
+             ha="center", fontsize=9, color=SUBTEXT)
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", dpi=150, bbox_inches="tight",
+                facecolor=BG, edgecolor="none")
+    plt.close(fig)
+    buf.seek(0)
+    print("Dashboard image generated successfully.")
+    return buf.read()
 
 
 def upload_snapshot_to_slack(image_bytes: bytes, date_str: str):
@@ -513,14 +597,11 @@ def main():
     print("Sending report to Slack...")
     send_slack(data)
 
-    print("Exporting Power BI Deep-Dive snapshot...")
+    print("Generating dashboard image...")
     date_str = datetime.now().strftime("%d-%b-%Y")
-    snapshot = export_pbi_snapshot(token)
-    if snapshot:
-        print("Uploading snapshot to Slack...")
-        upload_snapshot_to_slack(snapshot, date_str)
-    else:
-        print("Snapshot export skipped or failed.")
+    snapshot = generate_dashboard_image(data)
+    print("Uploading dashboard image to Slack...")
+    upload_snapshot_to_slack(snapshot, date_str)
 
 
 if __name__ == "__main__":
