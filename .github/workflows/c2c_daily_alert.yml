@@ -22,6 +22,7 @@ jobs:
       - name: Run C2C alert
         env:
           SLACK_WEBHOOK_URL:    ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_BOT_TOKEN:      ${{ secrets.SLACK_BOT_TOKEN }}
           AZURE_TENANT_ID:      ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID:      ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET:  ${{ secrets.AZURE_CLIENT_SECRET }}

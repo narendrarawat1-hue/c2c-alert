@@ -6,12 +6,17 @@ import anthropic
 
 # ── CONFIG ───────────────────────────────────────────────────────────────────
 SLACK_WEBHOOK_URL   = os.environ["SLACK_WEBHOOK_URL"]
+SLACK_BOT_TOKEN     = os.environ["SLACK_BOT_TOKEN"]
+SLACK_CHANNEL       = "c2c_marketplace_alerts"
 AZURE_TENANT_ID     = os.environ["AZURE_TENANT_ID"]
 AZURE_CLIENT_ID     = os.environ["AZURE_CLIENT_ID"]
 AZURE_CLIENT_SECRET = os.environ["AZURE_CLIENT_SECRET"]
 ANTHROPIC_API_KEY   = os.environ["ANTHROPIC_API_KEY"]
 
-PBI_DATASET_ID = "398f2429-ae2f-4704-b784-c3a345d9d6a5"
+PBI_DATASET_ID  = "398f2429-ae2f-4704-b784-c3a345d9d6a5"
+PBI_GROUP_ID    = "d5747b7a-5967-49ab-a21c-f61a095bb063"
+PBI_REPORT_ID   = "4b39cd5b-6872-49e9-bca9-7637c9b35755"
+PBI_PAGE_NAME   = "Deep-Dive"
 
 MEASURES = {
     "WL":      "Workable Leads",
@@ -402,13 +407,120 @@ def send_slack(data: dict):
         print("Sent to Slack successfully.")
 
 
+def export_pbi_snapshot(token: str) -> bytes | None:
+    """Export the Deep-Dive page from the Power BI report as PNG."""
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    base    = f"https://api.powerbi.com/v1.0/myorg/groups/{PBI_GROUP_ID}/reports/{PBI_REPORT_ID}"
+
+    # Step 1 — find the page ID by name
+    pages_resp = requests.get(f"{base}/pages", headers=headers)
+    if pages_resp.status_code != 200:
+        print(f"Could not fetch pages: {pages_resp.text}")
+        return None
+
+    pages   = pages_resp.json().get("value", [])
+    page    = next((p for p in pages if PBI_PAGE_NAME.lower() in p.get("displayName", "").lower()), None)
+    if not page:
+        print(f"Page '{PBI_PAGE_NAME}' not found. Available: {[p['displayName'] for p in pages]}")
+        return None
+
+    page_name = page["name"]
+
+    # Step 2 — trigger export
+    export_body = {
+        "format": "PNG",
+        "powerBIReportConfiguration": {
+            "pages": [{"pageName": page_name}]
+        }
+    }
+    export_resp = requests.post(f"{base}/ExportTo", headers=headers, json=export_body)
+    if export_resp.status_code not in (200, 202):
+        print(f"Export failed: {export_resp.text}")
+        return None
+
+    export_id = export_resp.json().get("id")
+    print(f"Export started: {export_id}")
+
+    # Step 3 — poll until done
+    import time
+    for _ in range(20):
+        time.sleep(5)
+        status_resp = requests.get(f"{base}/exports/{export_id}", headers=headers)
+        status      = status_resp.json().get("status")
+        print(f"Export status: {status}")
+        if status == "Succeeded":
+            break
+        if status == "Failed":
+            print("Export failed.")
+            return None
+
+    # Step 4 — download file
+    file_resp = requests.get(f"{base}/exports/{export_id}/file", headers=headers)
+    if file_resp.status_code == 200:
+        print("Snapshot downloaded successfully.")
+        return file_resp.content
+    else:
+        print(f"Download failed: {file_resp.text}")
+        return None
+
+
+def upload_snapshot_to_slack(image_bytes: bytes, date_str: str):
+    """Upload PNG snapshot to Slack channel using Bot Token."""
+    headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
+
+    # Step 1 — get upload URL
+    url_resp = requests.get(
+        "https://slack.com/api/files.getUploadURLExternal",
+        headers=headers,
+        params={"filename": f"C2C_DeepDive_{date_str}.png", "length": len(image_bytes)}
+    )
+    url_data = url_resp.json()
+    if not url_data.get("ok"):
+        print(f"Slack upload URL error: {url_data}")
+        return
+
+    upload_url = url_data["upload_url"]
+    file_id    = url_data["file_id"]
+
+    # Step 2 — upload file
+    requests.post(upload_url, data=image_bytes,
+                  headers={"Content-Type": "application/octet-stream"})
+
+    # Step 3 — complete upload and share to channel
+    complete_resp = requests.post(
+        "https://slack.com/api/files.completeUploadExternal",
+        headers={**headers, "Content-Type": "application/json"},
+        json={
+            "files": [{"id": file_id, "title": f"C2C Deep-Dive Dashboard — {date_str}"}],
+            "channel_id": SLACK_CHANNEL,
+            "initial_comment": f"📊 *C2C Deep-Dive Dashboard Snapshot — {date_str}*"
+        }
+    )
+    result = complete_resp.json()
+    if result.get("ok"):
+        print("Snapshot uploaded to Slack successfully.")
+    else:
+        print(f"Slack complete upload error: {result}")
+
+
 def main():
     print("Getting token...")
     token = get_token()
+
     print("Fetching metrics...")
     data = fetch_all(token)
-    print("Sending to Slack...")
+
+    print("Sending report to Slack...")
     send_slack(data)
+
+    print("Exporting Power BI Deep-Dive snapshot...")
+    date_str = datetime.now().strftime("%d-%b-%Y")
+    snapshot = export_pbi_snapshot(token)
+    if snapshot:
+        print("Uploading snapshot to Slack...")
+        upload_snapshot_to_slack(snapshot, date_str)
+    else:
+        print("Snapshot export skipped or failed.")
 
 
 if __name__ == "__main__":
