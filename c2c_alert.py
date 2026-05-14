@@ -474,7 +474,7 @@ def generate_dashboard_image(data: dict) -> bytes:
     ax_title.axis("off")
     date_line = (f"MTD {d(dr['mtd_start'])}→{d(dr['d1'])}  |  D-1: {d(dr['d1'])}  |  "
                  f"CW {d(dr['cw_start'])}→{d(dr['cw_end'])}  |  LW {d(dr['lw_start'])}→{d(dr['lw_end'])}")
-    ax_title.text(0.5, 0.72, "🚗  C2C Marketplace Dashboard", ha="center", va="center",
+    ax_title.text(0.5, 0.72, "C2C Marketplace Dashboard", ha="center", va="center",
                   fontsize=22, fontweight="bold", color=WHITE, transform=ax_title.transAxes)
     ax_title.text(0.5, 0.22, date_line, ha="center", va="center",
                   fontsize=11, color=SUBTEXT, transform=ax_title.transAxes)
@@ -530,11 +530,11 @@ def generate_dashboard_image(data: dict) -> bytes:
 
     # ── summary table ─────────────────────────────────────────────────────────
     ax_sum = fig.add_subplot(gs[1])
-    draw_table(ax_sum, col_headers, table_rows, "📊  Summary — MTD vs LMTD | D-1 | Week vs Last Week")
+    draw_table(ax_sum, col_headers, table_rows, "Summary — MTD vs LMTD | D-1 | Week vs Last Week")
 
     # ── DoD table ─────────────────────────────────────────────────────────────
     ax_dod = fig.add_subplot(gs[2])
-    draw_table(ax_dod, dod_col_hdrs, dod_rows, "📈  Last 7 Days — Day over Day")
+    draw_table(ax_dod, dod_col_hdrs, dod_rows, "Last 7 Days — Day over Day")
 
     # ── footer ────────────────────────────────────────────────────────────────
     fig.text(0.5, 0.01, f"Generated {datetime.now().strftime('%d %b %Y, %H:%M')} IST  •  Cars24 C2C Marketplace",
@@ -549,15 +549,47 @@ def generate_dashboard_image(data: dict) -> bytes:
     return buf.read()
 
 
+def get_slack_channel_id(channel_name: str) -> str | None:
+    """Resolve a Slack channel name to its channel ID."""
+    headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
+    name    = channel_name.lstrip("#")
+    cursor  = None
+    while True:
+        params = {"limit": 200, "types": "public_channel,private_channel", "exclude_archived": "true"}
+        if cursor:
+            params["cursor"] = cursor
+        resp = requests.get("https://slack.com/api/conversations.list",
+                            headers=headers, params=params)
+        data = resp.json()
+        if not data.get("ok"):
+            print(f"conversations.list error: {data.get('error')}")
+            return None
+        for ch in data.get("channels", []):
+            if ch.get("name") == name:
+                print(f"Resolved #{name} -> {ch['id']}")
+                return ch["id"]
+        cursor = data.get("response_metadata", {}).get("next_cursor")
+        if not cursor:
+            break
+    print(f"Channel '{channel_name}' not found in conversations.list")
+    return None
+
+
 def upload_snapshot_to_slack(image_bytes: bytes, date_str: str):
     """Upload PNG snapshot to Slack channel using Bot Token."""
     headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
+
+    # Resolve channel name -> ID
+    channel_id = get_slack_channel_id(SLACK_CHANNEL)
+    if not channel_id:
+        print(f"Cannot upload: channel '{SLACK_CHANNEL}' not found. Make sure the bot is invited to the channel.")
+        return
 
     # Step 1 — get upload URL
     url_resp = requests.get(
         "https://slack.com/api/files.getUploadURLExternal",
         headers=headers,
-        params={"filename": f"C2C_DeepDive_{date_str}.png", "length": len(image_bytes)}
+        params={"filename": f"C2C_Dashboard_{date_str}.png", "length": len(image_bytes)}
     )
     url_data = url_resp.json()
     if not url_data.get("ok"):
@@ -576,9 +608,9 @@ def upload_snapshot_to_slack(image_bytes: bytes, date_str: str):
         "https://slack.com/api/files.completeUploadExternal",
         headers={**headers, "Content-Type": "application/json"},
         json={
-            "files": [{"id": file_id, "title": f"C2C Deep-Dive Dashboard — {date_str}"}],
-            "channel_id": SLACK_CHANNEL,
-            "initial_comment": f"📊 *C2C Deep-Dive Dashboard Snapshot — {date_str}*"
+            "files": [{"id": file_id, "title": f"C2C Dashboard — {date_str}"}],
+            "channel_id": channel_id,
+            "initial_comment": f"*[C2C] Dashboard Snapshot — {date_str}*"
         }
     )
     result = complete_resp.json()
