@@ -498,7 +498,8 @@ def generate_dashboard_image(data: dict) -> bytes:
             x += col_w[i]
 
         # separator line
-        ax.axhline(y=0.93, xmin=0, xmax=1, color=ACC, linewidth=0.8, transform=ax.transAxes)
+        ax.plot([0, 1], [0.93, 0.93], color=ACC, linewidth=0.8,
+                transform=ax.transAxes, clip_on=False)
 
         row_h = 0.88 / max(n_rows, 1)
         for ri, row in enumerate(rows):
