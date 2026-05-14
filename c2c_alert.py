@@ -13,7 +13,7 @@ from matplotlib.gridspec import GridSpec
 # ── CONFIG ───────────────────────────────────────────────────────────────────
 SLACK_WEBHOOK_URL   = os.environ["SLACK_WEBHOOK_URL"]
 SLACK_BOT_TOKEN     = os.environ["SLACK_BOT_TOKEN"]
-SLACK_CHANNEL       = "c2c_marketplace_alerts"
+SLACK_CHANNEL       = "C0B2UAP9D7S"   # #c2c_marketplace_alerts
 AZURE_TENANT_ID     = os.environ["AZURE_TENANT_ID"]
 AZURE_CLIENT_ID     = os.environ["AZURE_CLIENT_ID"]
 AZURE_CLIENT_SECRET = os.environ["AZURE_CLIENT_SECRET"]
@@ -549,41 +549,9 @@ def generate_dashboard_image(data: dict) -> bytes:
     return buf.read()
 
 
-def get_slack_channel_id(channel_name: str) -> str | None:
-    """Resolve a Slack channel name to its channel ID."""
-    headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
-    name    = channel_name.lstrip("#")
-    cursor  = None
-    while True:
-        params = {"limit": 200, "types": "public_channel,private_channel", "exclude_archived": "true"}
-        if cursor:
-            params["cursor"] = cursor
-        resp = requests.get("https://slack.com/api/conversations.list",
-                            headers=headers, params=params)
-        data = resp.json()
-        if not data.get("ok"):
-            print(f"conversations.list error: {data.get('error')}")
-            return None
-        for ch in data.get("channels", []):
-            if ch.get("name") == name:
-                print(f"Resolved #{name} -> {ch['id']}")
-                return ch["id"]
-        cursor = data.get("response_metadata", {}).get("next_cursor")
-        if not cursor:
-            break
-    print(f"Channel '{channel_name}' not found in conversations.list")
-    return None
-
-
 def upload_snapshot_to_slack(image_bytes: bytes, date_str: str):
     """Upload PNG snapshot to Slack channel using Bot Token."""
     headers = {"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}
-
-    # Resolve channel name -> ID
-    channel_id = get_slack_channel_id(SLACK_CHANNEL)
-    if not channel_id:
-        print(f"Cannot upload: channel '{SLACK_CHANNEL}' not found. Make sure the bot is invited to the channel.")
-        return
 
     # Step 1 — get upload URL
     url_resp = requests.get(
@@ -609,7 +577,7 @@ def upload_snapshot_to_slack(image_bytes: bytes, date_str: str):
         headers={**headers, "Content-Type": "application/json"},
         json={
             "files": [{"id": file_id, "title": f"C2C Dashboard — {date_str}"}],
-            "channel_id": channel_id,
+            "channel_id": SLACK_CHANNEL,
             "initial_comment": f"*[C2C] Dashboard Snapshot — {date_str}*"
         }
     )
