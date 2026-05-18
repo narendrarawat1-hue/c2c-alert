@@ -612,11 +612,7 @@ def main():
     print("Sending report to Slack...")
     send_slack(data)
 
-    print("Generating dashboard image...")
-    date_str = datetime.now().strftime("%d-%b-%Y")
-    snapshot = generate_dashboard_image(data)
-    print("Uploading dashboard image to Slack...")
-    upload_snapshot_to_slack(snapshot, date_str)
+    print("Done.")
 
 
 if __name__ == "__main__":
