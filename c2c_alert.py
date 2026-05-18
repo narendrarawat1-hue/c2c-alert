@@ -64,9 +64,11 @@ def date_ranges():
     lmtd_start = lmtd_end.replace(day=1)
     # week: Monday=0
     cw_start   = today - timedelta(days=today.weekday())   # Mon of current week
-    cw_end     = d1 if d1 >= cw_start else cw_start        # D-1 (may equal cw_start on Mondays)
-    lw_start   = cw_start - timedelta(days=7)              # Mon of last week
-    lw_end     = cw_start - timedelta(days=1)              # Sun of last week (full week)
+    cw_end     = d1                                         # always D-1
+    if cw_start > cw_end:                                  # Monday: no completed CW days yet
+        cw_start = cw_end                                  # show just D-1
+    lw_start   = (today - timedelta(days=today.weekday())) - timedelta(days=7)   # Mon of last week
+    lw_end     = (today - timedelta(days=today.weekday())) - timedelta(days=1)   # Sun of last week
     return {
         "d1": d1, "mtd_start": mtd_start,
         "lmtd_start": lmtd_start, "lmtd_end": lmtd_end,
