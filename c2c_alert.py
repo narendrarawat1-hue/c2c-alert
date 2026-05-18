@@ -302,13 +302,29 @@ def get_ai_insights(data: dict) -> str:
     def live(r):        return fmt("Live", get_col(r, "Live"))
     def conv(r):        return fmt("WL_Live", get_col(r, "WL_Live"))
 
+    # ── build DoD trend lines for prompt ─────────────────────────────────────
+    dod_cols = ["WL", "Listing", "Live", "WL_Live", "Revenue"]
+    dod_lines = []
+    for r in data["dod"]:
+        date_val = None
+        for k, v in r.items():
+            if "date" in k.lower():
+                date_val = v; break
+        try:
+            ds = datetime.fromisoformat(str(date_val)).strftime("%d-%b")
+        except Exception:
+            ds = str(date_val)[:8]
+        vals = "  ".join(f"{fmt(k, get_col(r, k))}" for k in dod_cols)
+        dod_lines.append(f"{ds}  {vals}")
+    dod_section = "\n".join(dod_lines)
+
     prompt = f"""You are a senior analyst for Cars24 C2C Marketplace. Analyze this daily data and give sharp, actionable insights.
 
 DATE: {d(dr['d1'])} (D-1)
 MTD period: {d(dr['mtd_start'])} to {d(dr['d1'])}
 LMTD period: {d(dr['lmtd_start'])} to {d(dr['lmtd_end'])}
 
-NATIONAL SUMMARY:
+NATIONAL SUMMARY (MTD vs LMTD):
 Metric         MTD       LMTD      Δ        D-1
 Workable Leads {sv('MTD','WL')}  {sv('LMTD','WL')}  {sc('WL','MTD','LMTD')}  {sv('D1','WL')}
 Listing        {sv('MTD','Listing')}  {sv('LMTD','Listing')}  {sc('Listing','MTD','LMTD')}  {sv('D1','Listing')}
@@ -316,6 +332,10 @@ Listing Live   {sv('MTD','Live')}  {sv('LMTD','Live')}  {sc('Live','MTD','LMTD')
 WL→Live %      {sv('MTD','WL_Live')}  {sv('LMTD','WL_Live')}  {sc('WL_Live','MTD','LMTD')}  {sv('D1','WL_Live')}
 Unique Buyers  {sv('MTD','Buyers')}  {sv('LMTD','Buyers')}  {sc('Buyers','MTD','LMTD')}  {sv('D1','Buyers')}
 Revenue        {sv('MTD','Revenue')}  {sv('LMTD','Revenue')}  {sc('Revenue','MTD','LMTD')}  {sv('D1','Revenue')}
+
+LAST 7 DAYS TREND (Date | WL | Listing | Live | WL→Live% | Revenue):
+{dod_section}
+Note: Last row is D-1 ({d(dr['d1'])}). Compare D-1 against the 7-day trend to identify if it is an improvement, decline, or continuation.
 
 TOP 3 REGIONS (MTD by Revenue):
 {chr(10).join(f"{i+1}. {region_name(r)} — Revenue: {rev(r)}, Live: {live(r)}, WL→Live: {conv(r)}" for i, r in enumerate(top_regions))}
@@ -329,7 +349,7 @@ TOP 3 CITIES (MTD by Revenue):
 BOTTOM 3 CITIES (MTD by Revenue):
 {chr(10).join(f"{i+1}. {city_name(c)} — Revenue: {rev(c)}, Live: {live(c)}, WL→Live: {conv(c)}" for i, c in enumerate(bottom_cities))}
 
-Write a concise daily insight report with 3 sections using bullet points.
+Write a concise daily insight report with 4 sections using bullet points.
 IMPORTANT RULES:
 - Never use "YoY". Always say "vs LMTD" for month comparisons.
 - Use bullet points (•) for every point, not paragraphs.
@@ -339,24 +359,26 @@ IMPORTANT RULES:
 Format exactly like this:
 
 *National Overview*
-• [insight with specific numbers]
-• [key concern with specific numbers]
-• [bright spot with specific numbers]
+• [MTD vs LMTD insight with specific numbers]
+• [key concern or bright spot with specific numbers]
+
+*D-1 vs Last 7 Days Trend*
+• [how D-1 compares to the recent 7-day trend — is it an improvement, decline, or flat?]
+• [which metric showed the biggest daily swing on D-1 vs prior days]
+• [any trend (rising/falling/volatile) worth flagging]
 
 *Region Spotlight*
 • [top region insight]
 • [bottom region insight]
-• [actionable observation]
 
 *City Spotlight*
 • [top city insight]
-• [bottom city insight]
-• [actionable observation]"""
+• [bottom city insight]"""
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     resp   = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=600,
+        max_tokens=800,
         messages=[{"role": "user", "content": prompt}]
     )
     return resp.content[0].text
