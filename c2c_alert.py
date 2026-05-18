@@ -309,13 +309,13 @@ MTD period: {d(dr['mtd_start'])} to {d(dr['d1'])}
 LMTD period: {d(dr['lmtd_start'])} to {d(dr['lmtd_end'])}
 
 NATIONAL SUMMARY:
-Metric         MTD       LMTD      Δ        D-1       Curr Wk   Last Wk   Δ
-Workable Leads {sv('MTD','WL')}  {sv('LMTD','WL')}  {sc('WL','MTD','LMTD')}  {sv('D1','WL')}  {sv('CW','WL')}  {sv('LW','WL')}  {sc('WL','CW','LW')}
-Listing        {sv('MTD','Listing')}  {sv('LMTD','Listing')}  {sc('Listing','MTD','LMTD')}  {sv('D1','Listing')}  {sv('CW','Listing')}  {sv('LW','Listing')}  {sc('Listing','CW','LW')}
-Listing Live   {sv('MTD','Live')}  {sv('LMTD','Live')}  {sc('Live','MTD','LMTD')}  {sv('D1','Live')}  {sv('CW','Live')}  {sv('LW','Live')}  {sc('Live','CW','LW')}
-WL→Live %      {sv('MTD','WL_Live')}  {sv('LMTD','WL_Live')}  {sc('WL_Live','MTD','LMTD')}  {sv('D1','WL_Live')}  {sv('CW','WL_Live')}  {sv('LW','WL_Live')}  {sc('WL_Live','CW','LW')}
-Unique Buyers  {sv('MTD','Buyers')}  {sv('LMTD','Buyers')}  {sc('Buyers','MTD','LMTD')}  {sv('D1','Buyers')}  {sv('CW','Buyers')}  {sv('LW','Buyers')}  {sc('Buyers','CW','LW')}
-Revenue        {sv('MTD','Revenue')}  {sv('LMTD','Revenue')}  {sc('Revenue','MTD','LMTD')}  {sv('D1','Revenue')}  {sv('CW','Revenue')}  {sv('LW','Revenue')}  {sc('Revenue','CW','LW')}
+Metric         MTD       LMTD      Δ        D-1
+Workable Leads {sv('MTD','WL')}  {sv('LMTD','WL')}  {sc('WL','MTD','LMTD')}  {sv('D1','WL')}
+Listing        {sv('MTD','Listing')}  {sv('LMTD','Listing')}  {sc('Listing','MTD','LMTD')}  {sv('D1','Listing')}
+Listing Live   {sv('MTD','Live')}  {sv('LMTD','Live')}  {sc('Live','MTD','LMTD')}  {sv('D1','Live')}
+WL→Live %      {sv('MTD','WL_Live')}  {sv('LMTD','WL_Live')}  {sc('WL_Live','MTD','LMTD')}  {sv('D1','WL_Live')}
+Unique Buyers  {sv('MTD','Buyers')}  {sv('LMTD','Buyers')}  {sc('Buyers','MTD','LMTD')}  {sv('D1','Buyers')}
+Revenue        {sv('MTD','Revenue')}  {sv('LMTD','Revenue')}  {sc('Revenue','MTD','LMTD')}  {sv('D1','Revenue')}
 
 TOP 3 REGIONS (MTD by Revenue):
 {chr(10).join(f"{i+1}. {region_name(r)} — Revenue: {rev(r)}, Live: {live(r)}, WL→Live: {conv(r)}" for i, r in enumerate(top_regions))}
@@ -331,7 +331,7 @@ BOTTOM 3 CITIES (MTD by Revenue):
 
 Write a concise daily insight report with 3 sections using bullet points.
 IMPORTANT RULES:
-- Never use "YoY". Always say "vs LMTD" for month comparisons and "vs Last Week" for week comparisons.
+- Never use "YoY". Always say "vs LMTD" for month comparisons.
 - Use bullet points (•) for every point, not paragraphs.
 - Be specific with numbers from the data above.
 - Keep each bullet to 1-2 lines max.
