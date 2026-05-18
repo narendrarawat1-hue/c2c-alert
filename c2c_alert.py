@@ -63,10 +63,10 @@ def date_ranges():
     lmtd_end   = (mtd_start - timedelta(days=1)).replace(day=d1.day) if d1.day <= (mtd_start - timedelta(days=1)).day else (mtd_start - timedelta(days=1))
     lmtd_start = lmtd_end.replace(day=1)
     # week: Monday=0
-    cw_start   = today - timedelta(days=today.weekday())
-    cw_end     = d1
-    lw_start   = cw_start - timedelta(days=7)
-    lw_end     = cw_end   - timedelta(days=7)
+    cw_start   = today - timedelta(days=today.weekday())   # Mon of current week
+    cw_end     = d1 if d1 >= cw_start else cw_start        # D-1 (may equal cw_start on Mondays)
+    lw_start   = cw_start - timedelta(days=7)              # Mon of last week
+    lw_end     = cw_start - timedelta(days=1)              # Sun of last week (full week)
     return {
         "d1": d1, "mtd_start": mtd_start,
         "lmtd_start": lmtd_start, "lmtd_end": lmtd_end,
@@ -215,7 +215,7 @@ def build_summary_block(data: dict) -> str:
     )
 
     # column widths
-    CW = {"label": 16, "mtd": 8, "lmtd": 8, "chg": 12, "d1": 8, "cw": 8, "lw": 8, "wow": 12}
+    CW = {"label": 16, "mtd": 8, "lmtd": 8, "chg": 12, "d1": 8, "cw": 8, "lw": 8}
 
     header = (
         f"{'Metric'.center(CW['label'])} | "
@@ -224,8 +224,7 @@ def build_summary_block(data: dict) -> str:
         f"{'MTD Δ'.center(CW['chg'])} | "
         f"{'D-1'.center(CW['d1'])} | "
         f"{'Cur Wk'.center(CW['cw'])} | "
-        f"{'Lst Wk'.center(CW['lw'])} | "
-        f"{'WoW Δ'.center(CW['wow'])}"
+        f"{'Lst Wk'.center(CW['lw'])}"
     )
     sep = "-" * len(header)
     lines = [date_line, "", header, sep]
@@ -237,7 +236,6 @@ def build_summary_block(data: dict) -> str:
         cw_v   = get_val(row, "CW",   key)
         lw_v   = get_val(row, "LW",   key)
         mtd_chg = color_chg(key, mtd_v, lmtd_v)
-        wow_chg = color_chg(key, cw_v, lw_v)
         lines.append(
             f"{label:<{CW['label']}} | "
             f"{fmt(key,mtd_v).center(CW['mtd'])} | "
@@ -245,8 +243,7 @@ def build_summary_block(data: dict) -> str:
             f"{mtd_chg.center(CW['chg'])} | "
             f"{fmt(key,d1_v).center(CW['d1'])} | "
             f"{fmt(key,cw_v).center(CW['cw'])} | "
-            f"{fmt(key,lw_v).center(CW['lw'])} | "
-            f"{wow_chg.center(CW['wow'])}"
+            f"{fmt(key,lw_v).center(CW['lw'])}"
         )
     return "\n".join(lines)
 
@@ -420,7 +417,7 @@ def generate_dashboard_image(data: dict) -> bytes:
     d   = lambda dt: dt.strftime("%d-%b")
 
     # ── collect table rows ────────────────────────────────────────────────────
-    col_headers = ["Metric", "MTD", "LMTD", "MTD Δ", "D-1", "Cur Wk", "Lst Wk", "WoW Δ"]
+    col_headers = ["Metric", "MTD", "LMTD", "MTD Δ", "D-1", "Cur Wk", "Lst Wk"]
     table_rows  = []
     for key, label in zip(KEYS, LABELS):
         mtd_v  = get_val(row, "MTD",  key)
@@ -436,7 +433,6 @@ def generate_dashboard_image(data: dict) -> bytes:
             fmt(key, d1_v),
             fmt(key, cw_v),
             fmt(key, lw_v),
-            color_chg(key, cw_v, lw_v),
         ])
 
     # ── DoD rows ──────────────────────────────────────────────────────────────
