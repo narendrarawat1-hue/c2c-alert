@@ -417,22 +417,18 @@ def generate_dashboard_image(data: dict) -> bytes:
     d   = lambda dt: dt.strftime("%d-%b")
 
     # ── collect table rows ────────────────────────────────────────────────────
-    col_headers = ["Metric", "MTD", "LMTD", "MTD Δ", "D-1", "Cur Wk", "Lst Wk"]
+    col_headers = ["Metric", "MTD", "LMTD", "MTD Δ", "D-1"]
     table_rows  = []
     for key, label in zip(KEYS, LABELS):
         mtd_v  = get_val(row, "MTD",  key)
         lmtd_v = get_val(row, "LMTD", key)
         d1_v   = get_val(row, "D1",   key)
-        cw_v   = get_val(row, "CW",   key)
-        lw_v   = get_val(row, "LW",   key)
         table_rows.append([
             label,
             fmt(key, mtd_v),
             fmt(key, lmtd_v),
             color_chg(key, mtd_v, lmtd_v),
             fmt(key, d1_v),
-            fmt(key, cw_v),
-            fmt(key, lw_v),
         ])
 
     # ── DoD rows ──────────────────────────────────────────────────────────────
